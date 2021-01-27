@@ -1,0 +1,55 @@
+name: ECS Run Task
+description: Runs a once-off task in an ECS cluster
+author: https://github.com/ckornacker
+requirements:
+  - curl
+  - aws
+configuration:
+  properties:
+    download_url:
+      type: string
+    cluster:
+      type: string
+    name:
+      type: string
+    image:
+      type: string
+    file:
+      type: string
+    task:
+      type: string
+    service:
+      type: string
+    platform-version:
+      type: string
+    count:
+      type: integer
+    cpu:
+      type: integer
+    memory:
+      type: integer
+    fargate:
+      type: boolean
+    deregister:
+      type: boolean
+    region:
+      type: string
+    log-group:
+      type: string
+    environment:
+      type: [ string, array ]
+      minimum: 1
+    subnet:
+      type: [ string, array ]
+      minimum: 1
+    security_group:
+      type: [ string, array ]
+      minimum: 1
+  oneOf:
+    - required:
+      - file
+    - required:
+      - task
+  additionalProperties: false
+  dependencies:
+    platform-version: [ fargate ]

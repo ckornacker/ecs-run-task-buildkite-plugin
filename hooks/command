@@ -1,0 +1,98 @@
+#!/bin/bash
+set -euo pipefail
+
+expand_headers_on_error() {
+  echo "^^^ +++"
+}
+trap expand_headers_on_error ERR
+
+# Shorthand for reading env config
+function plugin_read_config() {
+  local var="BUILDKITE_PLUGIN_ECS_RUN_TASK_${1}"
+  local default="${2:-}"
+  echo "${!var:-$default}"
+}
+
+# Reads either a value or a list from plugin config
+function plugin_read_list() {
+  prefix_read_list "BUILDKITE_PLUGIN_ECS_RUN_TASK_$1"
+}
+
+# Reads either a value or a list from the given env prefix
+function prefix_read_list() {
+  local prefix="$1"
+  local parameter="${prefix}_0"
+
+  if [[ -n "${!parameter:-}" ]]; then
+    local i=0
+    local parameter="${prefix}_${i}"
+    while [[ -n "${!parameter:-}" ]]; do
+      echo "${!parameter}"
+      i=$((i+1))
+      parameter="${prefix}_${i}"
+    done
+  elif [[ -n "${!prefix:-}" ]]; then
+    echo "${!prefix}"
+  fi
+}
+
+download_url=${BUILDKITE_PLUGIN_ECS_RUN_TASK_DOWNLOAD_URL:-""}
+cluster=$(plugin_read_config CLUSTER "default")
+task_name=$(plugin_read_config NAME "buildkite-ecs-run-task")
+
+run_task_command=ecs-run-task
+if [[ -n "${download_url:-}" ]]; then
+  echo "--- :arrow_down: downloading ecs-run-task binary from ${download_url}"
+  run_task_command=./ecs-run-task
+  if [[ "${download_url}" == s3://* ]]; then
+    aws s3 cp ${download_url} ${run_task_command}
+  else
+    curl -L ${download_url} -o ${run_task_command}
+  fi
+  chmod +x ${run_task_command}
+fi
+
+run_params=()
+run_params+=("--name" "${task_name}")
+run_params+=("--cluster" "${cluster}")
+
+for parameter in file task image log-group service platform-version count cpu memory; do
+  config=${parameter/-/_}
+  if [[ "$(plugin_read_config ${config^^})" ]] ; then
+    run_params+=("--${parameter}" "$(plugin_read_config ${config^^})")
+  fi
+done
+ 
+if [[ "$(plugin_read_config FARGATE "true")" == "true" ]] ; then
+  run_params+=(--fargate)
+fi
+
+if [[ "$(plugin_read_config DEREGISTER "true")" == "true" ]] ; then
+  run_params+=(--deregister)
+fi
+
+if [[ "$(plugin_read_config REGION)" ]] ; then
+  AWS_DEFAULT_REGION=$(plugin_read_config REGION)
+  AWS_REGION=$(plugin_read_config REGION)
+  run_params+=("--region" "$(plugin_read_config REGION)")
+fi
+
+while IFS=$'\n' read -r environment ; do
+  [[ -n "${environment:-}" ]] && run_params+=("--env" "${environment}")
+done <<< "$(printf '%s\n%s' \
+  "$(plugin_read_list ENVIRONMENT)")"
+
+while IFS=$'\n' read -r subnet ; do
+  [[ -n "${subnet:-}" ]] && run_params+=("--subnet" "${subnet}")
+done <<< "$(printf '%s\n%s' \
+  "$(plugin_read_list SUBNET)")"
+
+while IFS=$'\n' read -r security_group ; do
+  [[ -n "${security_group:-}" ]] && run_params+=("--security-group" "${security_group}")
+done <<< "$(printf '%s\n%s' \
+  "$(plugin_read_list SECURITY_GROUP)")"
+
+echo "--- :ecs: running task ${task_name} on cluster ${cluster}"
+echo ${run_task_command} ${run_params[@]} -- "${BUILDKITE_COMMAND}"
+${run_task_command} ${run_params[@]} -- ${BUILDKITE_COMMAND}
+
